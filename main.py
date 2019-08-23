@@ -1,18 +1,21 @@
-
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 
-import sys, getopt
+import sys
+import getopt
 from datetime import datetime
 from tqdm import tqdm
 import uuid
 # from nltk.tokenize  import sent_tokenize, word_tokenize
 
 ROTATION_PERIOD = 20
+BREAK_START_PERIOD = 120
+BREAK_END_PERIOD = 180
+
 
 overall_rotation = []
 breaks = {}
+
 
 def parse_schedule(schedule_file):
     guards = []
@@ -43,11 +46,13 @@ def parse_schedule(schedule_file):
                     }
                 guards.append(guard)
     print('Parsed {} guards out of the schedule file.'.format(len(guards)))
-    return guards 
+    return guards
 
-def save_schedule(schedule):
-    with open('out/%s.out'%uuid.uuid4(), 'w') as out:
+
+def save_schedule(schedule, breaks):
+    with open('out/%s.out' % uuid.uuid4(), 'w') as out:
         out.writelines("%s\n" % rotation for rotation in schedule)
+        out.write(str(breaks))
 
 
 def rotate(l, n):
@@ -67,16 +72,18 @@ def main(argv):
 
     """ Initialze arguments """
     try:
-        opts, args = getopt.getopt(argv, "hvg:o:i:p:", ['guards=','ofile='])
+        opts, args = getopt.getopt(argv, "hvg:o:i:p:", ['guards=', 'ofile='])
     except getopt.GetoptError as e:
-        print('main.py -i <input.schedule> -o <output.rotation> -p <amount of positions>')
+        print('main.py -i <input.schedule> -o',
+              '<output.rotation> -p <amount of positions>')
         sys.exit(2)
-    
 
     """ Parse arguments """
     for opt, arg in opts:
         if opt == '-h':
-            print('main.py -i <input.schedule> -o <output.rotation> -p <amount of positions>')
+            print(
+                'main.py -i <input.schedule> -o',
+                ' <output.rotation> -p <amount of positions>')
             sys.exit()
         elif opt in ('-g', "--guards"):
             guards = arg
@@ -87,24 +94,15 @@ def main(argv):
         elif opt in ('-p', '--positions'):
             positions = int(arg)
 
-    """ 
-    TODO: Make a way where if basic requirements are not met return error message.
-  
-        if outputfile or inputfile is None:
-            print('Please define both an input and output file')
-            print('main.py -i <input.schedule> -o <output.rotation>')
-            sys.exit() 
-    """
-
-
     schedule = parse_schedule(inputfile)
     amount_guards = len(schedule)
 
-    print('Making a %s guard rotation with %s spots on.' % (amount_guards, positions))
+    print('Making a %s guard rotation with %s spots on.' %
+          (amount_guards, positions))
 
-    if (int(positions) % 2) == 0:
+    if (int(amount_guards/positions) % 2) == 0:
         # Even amount of positions for guards
-        
+
         # Check to make sure we have enough guards
         if int(amount_guards) > int(positions):
             # print('Have enough guards')
@@ -127,38 +125,45 @@ def main(argv):
 
                 # Find total length of shift
                 today_init = datetime.now()
-                earliest_time = today_init.replace(hour=23, minute=59, second=59,microsecond=0)
-                latest_time = today_init.replace(hour=0, minute=0, second=0,microsecond=0)
+                earliest_time = today_init.replace(
+                    hour=23, minute=59, second=59, microsecond=0)
+                latest_time = today_init.replace(
+                    hour=0, minute=0, second=0, microsecond=0)
 
                 for guard in schedule:
-                    
+
                     # In time calculations
                     in_time = guard["in"].split(":")
                     in_hour = int(in_time[0])
                     in_minute = int(in_time[1])
-                    in_time = today_init.replace(hour=in_hour, minute=in_minute, second=0, microsecond=0)
+                    in_time = today_init.replace(
+                        hour=in_hour, minute=in_minute,
+                        second=0, microsecond=0)
 
                     if in_time < earliest_time:
                         earliest_time = in_time
-                
-                    
+
                     # Out time calculations
                     out_time = guard["out"].split(":")
                     out_hour = int(out_time[0])
                     out_minute = int(out_time[1])
-                    out_time = today_init.replace(hour=out_hour, minute=out_minute, second=0, microsecond=0)
+                    out_time = today_init.replace(
+                        hour=out_hour, minute=out_minute,
+                        second=0, microsecond=0)
 
                     if out_time > latest_time:
                         latest_time = out_time
-                
 
                 shift_length = (latest_time-earliest_time).seconds
                 shift_length = (shift_length/60)
 
                 total_rotations = shift_length/ROTATION_PERIOD
 
-                print('Our shift length is %s minutes long. With %s total rotations' % (shift_length, total_rotations))
+                print('Our shift length is %s minutes long.',
+                      ' With %s total rotations' % (
+                          shift_length, total_rotations))
 
+                break_taken = []
                 for i in range(1, total_rotations+1):
                     if i == 1:
                         current_rotation = []
@@ -166,22 +171,36 @@ def main(argv):
                             current_rotation.append(guard['id'])
                         overall_rotation.append(current_rotation)
                     else:
-                        '''
-                        i -1 is the index of the last rotation
-                        Rotate overall_rotation[i-1] to the right by one
-                        '''
 
                         past_rotation = overall_rotation[i-2]
                         current_rotation = rotate(past_rotation, -1)
                         overall_rotation.append(current_rotation)
-                
+
+                        current_rotation_time = i * ROTATION_PERIOD
+
+                        if current_rotation_time >= BREAK_START_PERIOD:
+                            # Itterate through the current guarding spots
+                            for j in range(1, len(current_rotation)+1):
+                                # If the guarding spot is off
+                                if j in set(off_positions) and (j % (amount_guards/2)) == 0:
+
+                                    guardID = current_rotation[j-1]
+                                    if guardID not in set(break_taken):
+                                        # Guard is on their break
+                                        break_taken.append(guardID)
+                                        print('Guard ID #%s is taking their break at %s' % (
+                                            guardID, current_rotation_time))
+                                        breaks[guardID] = current_rotation_time
+                                        break_taken.append(guardID)
+
                 # print(overall_rotation)
-                save_schedule(overall_rotation)
+                print(breaks)
+                save_schedule(overall_rotation, breaks)
             else:
-                print('We do not have enough guards in that schedule! We need %s positions' % (positions))
+                print('We do not have enough guards in that schedule! We need %s positions' % (
+                    positions))
     else:
         print('Odd positions')
-    
 
 
 if __name__ == "__main__":
