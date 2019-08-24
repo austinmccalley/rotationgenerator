@@ -6,8 +6,10 @@ import getopt
 from datetime import datetime
 from tqdm import tqdm
 import uuid
+import math
 # from nltk.tokenize  import sent_tokenize, word_tokenize
 
+# ALL IN MINUTES
 ROTATION_PERIOD = 20
 BREAK_START_PERIOD = 120
 BREAK_END_PERIOD = 180
@@ -55,6 +57,80 @@ def save_schedule(schedule, breaks):
         out.write(str(breaks))
 
 
+def parse_on_off(on_positions, off_positions, schedule, amount_guards):
+    # Find total length of shift
+    today_init = datetime.now()
+    earliest_time = today_init.replace(
+        hour=23, minute=59, second=59, microsecond=0)
+    latest_time = today_init.replace(
+        hour=0, minute=0, second=0, microsecond=0)
+
+    for guard in schedule:
+
+        # In time calculations
+        in_time = guard["in"].split(":")
+        in_hour = int(in_time[0])
+        in_minute = int(in_time[1])
+        in_time = today_init.replace(
+            hour=in_hour, minute=in_minute,
+            second=0, microsecond=0)
+
+        if in_time < earliest_time:
+            earliest_time = in_time
+
+        # Out time calculations
+        out_time = guard["out"].split(":")
+        out_hour = int(out_time[0])
+        out_minute = int(out_time[1])
+        out_time = today_init.replace(
+            hour=out_hour, minute=out_minute,
+            second=0, microsecond=0)
+
+        if out_time > latest_time:
+            latest_time = out_time
+
+    shift_length = (latest_time-earliest_time).seconds
+    shift_length = (shift_length/60)
+
+    total_rotations = math.floor(shift_length/ROTATION_PERIOD)
+
+    print('Our shift length is %s minutes long. With %s total rotations' %
+          (shift_length, total_rotations))
+
+    break_taken = []
+    for i in range(1, int(total_rotations+1)):
+        if i == 1:
+            current_rotation = []
+            for guard in schedule:
+                current_rotation.append(guard['id'])
+            overall_rotation.append(current_rotation)
+        else:
+
+            past_rotation = overall_rotation[i-2]
+            current_rotation = rotate(past_rotation, -1)
+            overall_rotation.append(current_rotation)
+
+            current_rotation_time = i * ROTATION_PERIOD
+
+            if current_rotation_time >= BREAK_START_PERIOD:
+                curr_break_taken = []
+                # Itterate through the current guarding spots
+                for j in range(1, len(current_rotation)+1):
+                    # If the guarding spot is off
+                    if j in set(off_positions) and not (len(off_positions)-1) == len(curr_break_taken):
+
+                        guardID = current_rotation[j-1]
+                        if guardID not in set(break_taken):
+                            # Guard is on their break
+                            break_taken.append(guardID)
+                            breaks[guardID] = current_rotation_time
+                            curr_break_taken.append(current_rotation_time)
+
+                            break_taken.append(guardID)
+
+    save_schedule(overall_rotation, breaks)
+
+
 def rotate(l, n):
     return l[n:] + l[:n]
 
@@ -97,10 +173,14 @@ def main(argv):
     schedule = parse_schedule(inputfile)
     amount_guards = len(schedule)
 
+    if positions >= amount_guards:
+        print('ERROR: More guards needed')
+        sys.exit()
+
     print('Making a %s guard rotation with %s spots on.' %
           (amount_guards, positions))
 
-    if (int(amount_guards/positions) % 2) == 0:
+    if ((float(amount_guards)/float(positions)) == 2):
         # Even amount of positions for guards
 
         # Check to make sure we have enough guards
@@ -120,87 +200,28 @@ def main(argv):
                     else:
                         on_positions.append(x)
 
-                print('On Postions %s' % on_positions)
-                print('Off Postions %s' % off_positions)
+                parse_on_off(on_positions, off_positions,
+                             schedule, amount_guards)
 
-                # Find total length of shift
-                today_init = datetime.now()
-                earliest_time = today_init.replace(
-                    hour=23, minute=59, second=59, microsecond=0)
-                latest_time = today_init.replace(
-                    hour=0, minute=0, second=0, microsecond=0)
-
-                for guard in schedule:
-
-                    # In time calculations
-                    in_time = guard["in"].split(":")
-                    in_hour = int(in_time[0])
-                    in_minute = int(in_time[1])
-                    in_time = today_init.replace(
-                        hour=in_hour, minute=in_minute,
-                        second=0, microsecond=0)
-
-                    if in_time < earliest_time:
-                        earliest_time = in_time
-
-                    # Out time calculations
-                    out_time = guard["out"].split(":")
-                    out_hour = int(out_time[0])
-                    out_minute = int(out_time[1])
-                    out_time = today_init.replace(
-                        hour=out_hour, minute=out_minute,
-                        second=0, microsecond=0)
-
-                    if out_time > latest_time:
-                        latest_time = out_time
-
-                shift_length = (latest_time-earliest_time).seconds
-                shift_length = (shift_length/60)
-
-                total_rotations = shift_length/ROTATION_PERIOD
-
-                print('Our shift length is %s minutes long.',
-                      ' With %s total rotations' % (
-                          shift_length, total_rotations))
-
-                break_taken = []
-                for i in range(1, total_rotations+1):
-                    if i == 1:
-                        current_rotation = []
-                        for guard in schedule:
-                            current_rotation.append(guard['id'])
-                        overall_rotation.append(current_rotation)
-                    else:
-
-                        past_rotation = overall_rotation[i-2]
-                        current_rotation = rotate(past_rotation, -1)
-                        overall_rotation.append(current_rotation)
-
-                        current_rotation_time = i * ROTATION_PERIOD
-
-                        if current_rotation_time >= BREAK_START_PERIOD:
-                            # Itterate through the current guarding spots
-                            for j in range(1, len(current_rotation)+1):
-                                # If the guarding spot is off
-                                if j in set(off_positions) and (j % (amount_guards/2)) == 0:
-
-                                    guardID = current_rotation[j-1]
-                                    if guardID not in set(break_taken):
-                                        # Guard is on their break
-                                        break_taken.append(guardID)
-                                        print('Guard ID #%s is taking their break at %s' % (
-                                            guardID, current_rotation_time))
-                                        breaks[guardID] = current_rotation_time
-                                        break_taken.append(guardID)
-
-                # print(overall_rotation)
-                print(breaks)
-                save_schedule(overall_rotation, breaks)
             else:
                 print('We do not have enough guards in that schedule! We need %s positions' % (
                     positions))
     else:
-        print('Odd positions')
+
+        if (float(amount_guards)/positions) > 2:
+            on_positions = [1]
+            off_positions = []
+            past_pos = 1
+            for x in range(1, positions):
+                next_pos = math.floor(
+                    (float(amount_guards - x) / 2) + past_pos)
+                on_positions.append(int(next_pos))
+                past_pos = next_pos
+
+            for i in range(1, amount_guards):
+                if i not in set(on_positions):
+                    off_positions.append(i)
+            parse_on_off(on_positions, off_positions, schedule, amount_guards)
 
 
 if __name__ == "__main__":
